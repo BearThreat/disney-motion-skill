@@ -22,15 +22,24 @@ Optional groups (each name must exist in tracks):
   chains    [["root", "link1", "link2"]]             parent -> child; children should lag their parent
   paths     [["x", "y"]]                             2D positions that should travel in arcs
   mirrors   [["armL", "armR"]]                       left/right pairs that should not move as twins
+  scale     ["button.scale"]                         other scale channels (not checked for ease)
   contacts  [22, 40]                                 frames where a sharp path corner is allowed
   prep      {"head": ["body"]}                       name prefixes whose wind-up counts for another prefix
+  wind_ups  [21]                                     frames where a held wind-up ends (a crouch that holds)
+  beats     {"x": [[0, 12], [20, 30]]}               explicit moves: [start_frame, rest_frame]; the value
+                                                     at rest_frame is the target. Overrides inference.
+  ends_at_rest  true (default) when the clip's last frame is the final target; false if it ends mid-move
   exempt    {"ease": ["ball.x"], "jelly": ["*"]}     checks to skip per track, for intended motion
   y_down    true when y grows downward (screen space)
+
+Sampling limit: moves shorter than 3 samples or 0.1 s are not checked for ease. For very short UI
+feedback (80-150 ms), check the easing curve itself with the bezier or spring mode.
 
 Checks, and where they run:
   ease          every non-scale track     FAIL when a move runs at constant speed from start to stop
   overshoot     every track               FAIL when a move passes its rest value by more than the limit
                                           (ui 10%, object 25%, character 35% x dial); skipped for wags
+                                          (moves that end near where they started)
   jelly         every track               WARN when swings do not shrink, or UI wobbles more than twice
   anticipation  character context         WARN when a big move has no small opposite move just before it
                                           (in a track with the same prefix, or a prefix named in prep)
@@ -117,7 +126,7 @@ def check_ease(name, xs, fps):
     return out
 
 
-def rests(xs, fps):
+def rests(xs, fps, ends_at_rest=True):
     """Each move that ends in a hold, as (move_start_frame, rest_frame)."""
     eps = still_eps(xs)
     v = velocity(xs)
@@ -138,14 +147,16 @@ def rests(xs, fps):
             beats.append((move_start, i))  # the move ends at frame i, which starts the hold
             move_start = None
         i = j
+    if move_start is not None and ends_at_rest:
+        beats.append((move_start, len(xs) - 1))  # the clip ends on its target
     return beats
 
 
-def check_settle(name, xs, fps, context, dial):
+def check_settle(name, xs, fps, context, dial, beats=None, ends_at_rest=True):
     """Overshoot past each rest value, and whether the swings around it die down."""
     out = []
     limit = OVERSHOOT_LIMIT[context] * (dial if context == "character" else 1.0)
-    for a, b in rests(xs, fps):
+    for a, b in (beats if beats is not None else rests(xs, fps, ends_at_rest)):
         start, target = xs[a], xs[b]
         disp = target - start
         reach = max(abs(x - start) for x in xs[a:b + 1])
@@ -171,7 +182,7 @@ def check_settle(name, xs, fps, context, dial):
         if not wag:
             sign = 1 if disp > 0 else -1
             over = max(0.0, max(sign * x for x in d)) / abs(disp)
-            if over > limit and not (context == "character" and crossings >= 3):
+            if over > limit:
                 out.append(finding("overshoot", FAIL,
                                    f"frames {a}-{b}: passes its rest value by {over:.0%} of the move (limit "
                                    f"{limit:.0%} for {context}, dial {dial}).", name))
@@ -214,7 +225,7 @@ def anticipation_events(xs, fps):
     return majors, preps
 
 
-def check_anticipation(tracks, fps, skip, prep_map, exempt):
+def check_anticipation(tracks, fps, skip, prep_map, exempt, wind_ups=()):
     gap = max(2, round(0.1 * fps))
     events = {n: anticipation_events(xs, fps) for n, xs in tracks.items() if n not in skip}
     out = []
@@ -222,7 +233,7 @@ def check_anticipation(tracks, fps, skip, prep_map, exempt):
         if is_exempt(exempt, "anticipation", name):
             continue
         sources = {prefix(name)} | set(prep_map.get(prefix(name), []))
-        preps = [p for n, (_, ps) in events.items() if prefix(n) in sources for p in ps]
+        preps = [p for n, (_, ps) in events.items() if prefix(n) in sources for p in ps] + list(wind_ups)
         bare = [f for f in majors if not any(f - gap <= p <= f for p in preps)]
         if bare:
             out.append(finding("anticipation", WARN,
@@ -256,8 +267,17 @@ def check_volume(group, tracks):
     return out
 
 
+def same_shape(a, b, sign=1):
+    """True when b is a (or -a) plus a constant offset: the two move on the same frames."""
+    diffs = [y - sign * x for x, y in zip(a, b)]
+    scale = max(track_range(a), track_range(b), 1e-9)
+    return track_range(diffs) <= 1e-6 * scale
+
+
 def best_lag(a, b, max_lag, sign=1):
     """Lag (frames) of b behind a with the best velocity correlation, and that correlation."""
+    if same_shape(a, b, sign):
+        return 0, 1.0
     va, vb = velocity(a), [sign * x for x in velocity(b)]
     best, best_lag_ = -2.0, 0
     for lag in range(0, max_lag + 1):
@@ -272,7 +292,7 @@ def best_lag(a, b, max_lag, sign=1):
         if sx == 0 or sy == 0:
             continue
         r = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / (sx * sy)
-        if r > best:
+        if r > best + 1e-9:  # ties go to the smaller lag
             best, best_lag_ = r, lag
     return best_lag_, best
 
@@ -284,7 +304,7 @@ def check_chain(chain, tracks, fps):
     for a, b in zip(chain, chain[1:]):
         if track_range(tracks[a]) <= 1e-9 or track_range(tracks[b]) <= 1e-9:
             continue  # a still link: nothing to judge
-        lag, r = best_lag(tracks[a], tracks[b], max_lag)
+        lag, r = max((best_lag(tracks[a], tracks[b], max_lag, sg) for sg in (1, -1)), key=lambda t: (round(t[1], 6), -t[0]))
         if r < 0.5:
             continue  # the link does not follow its parent clearly enough to measure a lag
         judged += 1
@@ -409,7 +429,7 @@ def validate(doc):
 
     def names_exist(key, item):
         for t in item:
-            if t not in tracks:
+            if not isinstance(t, str) or t not in tracks:
                 raise BadInput(f"{key} names a track that does not exist: {t}")
 
     for key, sizes in (("volume", (2, 3)), ("paths", (2,)), ("mirrors", (2,))):
@@ -428,8 +448,29 @@ def validate(doc):
         raise BadInput("contacts must be a list of frame numbers")
     for key in ("prep", "exempt"):
         m = doc.get(key, {})
-        if not isinstance(m, dict) or not all(isinstance(v, list) for v in m.values()):
-            raise BadInput(f"{key} must map names to lists")
+        if not isinstance(m, dict) or not all(isinstance(v, list) and all(isinstance(x, str) for x in v)
+                                              for v in m.values()):
+            raise BadInput(f"{key} must map names to lists of names")
+    scale = doc.get("scale", [])
+    if not isinstance(scale, list):
+        raise BadInput("scale must be a list of track names")
+    names_exist("scale", scale)
+    wind_ups = doc.get("wind_ups", [])
+    if not isinstance(wind_ups, list) or not all(isinstance(c, int) and not isinstance(c, bool) for c in wind_ups):
+        raise BadInput("wind_ups must be a list of frame numbers")
+    beats = doc.get("beats", {})
+    if not isinstance(beats, dict):
+        raise BadInput("beats must map track names to [start, rest] frame pairs")
+    n = lengths.pop()
+    for k, spans in beats.items():
+        names_exist("beats", [k])
+        if not isinstance(spans, list) or not all(
+                isinstance(sp, list) and len(sp) == 2 and all(isinstance(f, int) and not isinstance(f, bool)
+                                                              for f in sp) and 0 <= sp[0] < sp[1] < n
+                for sp in spans):
+            raise BadInput(f"beats for {k} must be [start, rest] frame pairs inside the clip")
+    if not isinstance(doc.get("ends_at_rest", True), bool) or not isinstance(doc.get("y_down", False), bool):
+        raise BadInput("ends_at_rest and y_down must be true or false")
     return float(fps), context, float(dial)
 
 
@@ -437,15 +478,17 @@ def check_tracks(doc):
     fps, context, dial = validate(doc)
     tracks = {k: [float(x) for x in v] for k, v in doc["tracks"].items()}
     exempt = doc.get("exempt", {})
-    scale = {t for g in doc.get("volume", []) for t in g}
+    scale = {t for g in doc.get("volume", []) for t in g} | set(doc.get("scale", []))
     followers = {t for c in doc.get("chains", []) for t in c[1:]}
+    beats = {k: [tuple(sp) for sp in v] for k, v in doc.get("beats", {}).items()}
     out = []
     for name, xs in tracks.items():
         if name not in scale:
             out += check_ease(name, xs, fps)
-        out += check_settle(name, xs, fps, context, dial)
+        out += check_settle(name, xs, fps, context, dial, beats.get(name), doc.get("ends_at_rest", True))
     if context == "character":
-        out += check_anticipation(tracks, fps, scale | followers, doc.get("prep", {}), exempt)
+        out += check_anticipation(tracks, fps, scale | followers, doc.get("prep", {}), exempt,
+                                  doc.get("wind_ups", []))
         out += check_dead_holds(tracks, fps)
     for g in doc.get("volume", []):
         out += check_volume(g, tracks)
@@ -506,7 +549,7 @@ def spring_report(k, c, m=1.0):
             return 1 - (1 + w * t) * math.exp(-w * t)
         rate = w
     else:
-        r1, r2 = -w * (z - math.sqrt(z * z - 1)), -w * (z + math.sqrt(z * z - 1))
+        r1, r2 = -w / (z + math.sqrt(z * z - 1)), -w * (z + math.sqrt(z * z - 1))  # stable slow root
         overshoot = 0.0
 
         def x(t):

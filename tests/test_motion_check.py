@@ -218,6 +218,69 @@ class CriticCases(unittest.TestCase):
             self.assertEqual(p.returncode, 2, (args, p.stdout, p.stderr))
 
 
+class CriticRound2(unittest.TestCase):
+    def kinds(self, doc):
+        return {c for c, _ in checks(doc)}
+
+    def test_clip_ending_on_target_without_hold(self):
+        doc = {"context": "ui", "tracks": {"x": [0, 0.3, 0.8, 1.25, 1.1, 1.0]}}
+        self.assertIn(("overshoot", "FAIL"), checks(doc))
+        doc["ends_at_rest"] = False
+        self.assertNotIn("overshoot", self.kinds(doc))
+
+    def test_explicit_beats_split_two_targets(self):
+        xs = [0, 60, 100, 100, 130, 160, 200, 200, 200]
+        doc = {"context": "ui", "tracks": {"x": xs}, "beats": {"x": [[0, 2], [3, 6]]}}
+        self.assertNotIn("overshoot", self.kinds(doc))
+
+    def test_character_overshoot_not_waived_by_crossings(self):
+        doc = {"context": "character", "tracks": {"x": [0, 50, 145, 90, 106, 98, 100, 100, 100]}}
+        self.assertIn(("overshoot", "FAIL"), checks(doc))
+
+    def test_identical_eased_and_linear_links_are_welded(self):
+        eased = [(i / 7) ** 2 for i in range(8)] + [1.0] * 4
+        linear = [float(i) for i in range(12)]
+        for a in (eased, linear):
+            doc = {"tracks": {"a": a, "b": [x + 5 for x in a]}, "chains": [["a", "b"]]}
+            self.assertIn(("overlap", "FAIL"), checks(doc), a)
+
+    def test_opposite_polarity_chain_is_welded(self):
+        w = [20 * math.sin(2 * math.pi * f / 24) * math.exp(-f / 40) for f in range(72)]
+        doc = {"tracks": {"a": w, "b": [-x for x in w]}, "chains": [["a", "b"]]}
+        self.assertIn(("overlap", "FAIL"), checks(doc))
+
+    def test_held_crouch_counts_as_wind_up(self):
+        head = [0.0] * 12 + [40 * smooth(i / 10) for i in range(11)] + [40.0] * 6
+        body = [0.0] * 6 + [-5 * smooth(i / 5) for i in range(6)] + [-5.0] * 17
+        doc = {"context": "character", "tracks": {"head.rot": head, "body.y": body}, "prep": {"head": ["body"]}}
+        self.assertIn("head.rot", {f["track"] for f in mc.check_tracks(doc) if f["check"] == "anticipation"})
+        doc["wind_ups"] = [11]
+        self.assertNotIn("head.rot", {f["track"] for f in mc.check_tracks(doc) if f["check"] == "anticipation"})
+
+    def test_declared_scale_channel_skips_ease(self):
+        xs = [1.0] * 3 + [1 - 0.01 * i for i in range(5)] + [0.96] * 3
+        doc = {"context": "ui", "tracks": {"button.scale": xs}, "scale": ["button.scale"]}
+        self.assertNotIn("ease", self.kinds(doc))
+
+    def test_bad_member_types_exit_2(self):
+        script = os.path.join(ROOT, "scripts", "motion_check.py")
+        with tempfile.TemporaryDirectory() as d:
+            for i, extra in enumerate(({"paths": [[[], "x"]]}, {"prep": {"x": [[]]}}, {"exempt": {"ease": [1]}},
+                                       {"beats": {"x": [[2, 1]]}}, {"wind_ups": ["3"]})):
+                doc = {"tracks": {"x": [0, 1, 2]}}
+                doc.update(extra)
+                path = os.path.join(d, f"{i}.json")
+                with open(path, "w") as fh:
+                    json.dump(doc, fh)
+                p = subprocess.run([sys.executable, script, "tracks", path], capture_output=True, text=True)
+                self.assertEqual(p.returncode, 2, (extra, p.stdout, p.stderr))
+
+    def test_extreme_overdamped_spring(self):
+        r = mc.spring_report(1, 1e9)
+        self.assertGreater(r["settle_seconds_2pct"], 1e8)
+        self.assertEqual(r["overshoot"], 0.0)
+
+
 class ExampleFile(unittest.TestCase):
     def test_example_track_file_is_valid(self):
         with open(os.path.join(ROOT, "examples", "tracks.example.json")) as fh:

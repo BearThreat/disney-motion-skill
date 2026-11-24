@@ -47,7 +47,7 @@ def lerp(a, b, t):
 
 # ---------------------------------------------------------------- naive
 # body.y is the height of the body's centre above the ground: feet lift + half the body height * sy.
-HALF_H = 20.0
+HALF_H, HALF_W = 20.0, 32.0
 
 
 def naive():
@@ -65,7 +65,7 @@ def naive():
             rot = 14 * math.sin((f - 52) / 24 * 4 * 2 * math.pi)
         sy = 1 + 0.08 * math.sin(f * 0.5)  # always wobbling, and the width never compensates
         tr["body.x"].append(x)
-        tr["body.y"].append(lift + HALF_H * sy)
+        tr["body.y"].append(lift + support(1.0, sy, rot))
         tr["body.rot"].append(rot)
         tr["body.sx"].append(1.0)
         tr["body.sy"].append(sy)
@@ -89,14 +89,20 @@ def naive():
 TAKEOFF, TOUCHDOWN, AIR_A = 22, 40, 0.15
 
 
+def support(sx, sy, rot_deg):
+    """Half-height of the rotated, scaled body ellipse: the centre sits this far above its lowest point."""
+    t = math.radians(rot_deg)
+    return math.hypot(HALF_W * sx * math.sin(t), HALF_H * sy * math.cos(t))
+
+
 def disney():
     tr = {k: [] for k in ["body.x", "body.y", "body.rot", "body.sx", "body.sy", "head.rot"]
           + [f"tail{i}.rot" for i in range(1, TAIL + 1)]}
     air = TOUCHDOWN - TAKEOFF
     v_air = 160 / (1 - AIR_A / 2)  # horizontal speed in the air; the takeoff ramp meets it exactly
-    ang = [35.0] * (TAIL + 1)  # tail spring chain state, angles in degrees
+    ang = [0.0] + [35.0 + 6 * i for i in range(TAIL)]  # tail starts at its rest pose, degrees
     vel = [0.0] * (TAIL + 1)
-    prev_y = prev_vy = 0.0
+    prev_y, prev_vy = HALF_H, 0.0  # seeded from the opening pose, so frame 0 gives no kick
     for f in range(FRAMES):
         x = lift = rot = head = 0.0
         sy = 1.0
@@ -128,7 +134,7 @@ def disney():
         if f < 12 or f > 56:
             sy += 0.012 * math.sin(2 * math.pi * f / 40)  # breath
         sx = 1 / sy  # 2D: keep the area
-        y = lift + HALF_H * sy
+        y = lift + support(sx, sy, rot)  # centre height that keeps the rotated body on the ground
         # tail: each link springs toward its parent; the body's vertical motion kicks the base
         vy_body = y - prev_y
         ay_body = vy_body - prev_vy
@@ -181,7 +187,7 @@ def draw_creature(d, tr, f, ox, ground):
     sx, sy, rot = tr["body.sx"][f], tr["body.sy"][f], tr["body.rot"][f]
     rw, rh = W / 2 * sx, H / 2 * sy
     x, cy = ox + tr["body.x"][f], ground - tr["body.y"][f]  # body.y is the centre height
-    lift = tr["body.y"][f] - rh
+    lift = tr["body.y"][f] - support(sx, sy, rot)
     # shadow shrinks with height (staging: reads the jump)
     s = max(0.35, 1 - lift / 140)
     d.ellipse([x - 34 * s, ground - 4 * s, x + 34 * s, ground + 4 * s], fill=(205, 194, 172))

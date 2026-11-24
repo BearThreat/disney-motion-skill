@@ -1,6 +1,6 @@
 ---
 name: disney-motion
-description: Makes code-driven animation feel alive and appealing by turning Disney's 12 animation principles into numbers, code operators and a motion checker. Use when you write or fix character, creature, object, procedural, game, Three.js, canvas, SVG, Lottie, Remotion, GSAP, CSS or Framer Motion animation that must feel weighty, cartoony or "Disney/Pixar-like", or that looks stiff, robotic, floaty or too bouncy. Not for static design or video editing.
+description: Makes code-driven animation feel alive and appealing by turning Disney's 12 animation principles into numbers, code operators and a motion checker. Use when you write, tune or fix motion - character, creature, object, procedural or game animation, UI transitions and micro-interactions, easing curves, springs and animation timing - in Three.js, canvas, SVG, Lottie, Remotion, GSAP, CSS or Framer Motion, especially when it must feel weighty, cartoony or "Disney/Pixar-like", or looks stiff, robotic, floaty or too bouncy. Not for static design or video editing.
 ---
 
 # Disney Motion
@@ -15,7 +15,10 @@ Agents usually apply the 12 principles as decoration. Everything wobbles, every 
 
 ## Workflow
 
-1. **Write the beat sheet first.** For each action, write one line per beat with its frames at 24 fps: *thought* (what the character wants) → *anticipation* → *action* → *follow-through / settle* → *hold*. Example: `examples/hop_demo.py` (top of `disney()`). If you cannot say what the character thinks, the motion will not read.
+1. **Write the beat sheet first.** One line per beat, with its frames at 24 fps (or its milliseconds for UI). The beats depend on what moves:
+   - **Character:** *thought* (what it wants) → *anticipation* → *action* → *follow-through / settle* → *hold*. If you cannot say what the character thinks, the motion will not read. Example: the top of `disney()` in `examples/hop_demo.py`.
+   - **Object or prop:** *force or purpose* → *wind-up, only if it explains the action* → *action* → *settle*.
+   - **UI:** *trigger* → *immediate feedback* (no wind-up before the response to a user's input) → *transition* → *stable state*.
 2. **Pick the dial.** It scales amplitudes: squash, overshoot, anticipation depth and lag. It does not scale durations; mass and size set those.
 
    | Context | Dial | Feel |
@@ -27,9 +30,9 @@ Agents usually apply the 12 principles as decoration. Everything wobbles, every 
 
 3. **Block poses, then timing.** Key poses first, each with a clear silhouette. Then set the frames per beat. Then add breakdowns that favour one key (uneven spacing). Use pose-to-pose for acting beats and straight-ahead (physics or springs) for appendages. Most procedural rigs need both.
 4. **Apply the operators.** See the table below. Drive the motion from the root (hips or body). Make children lag behind their parents. Stage one main action at a time.
-5. **Check, then watch.** Sample every animated channel once per frame and write the samples to JSON. `examples/tracks.example.json` is a file you can copy. Then run:
-   `python3 scripts/motion_check.py tracks tracks.json`
-   Fix each FAIL. If the motion is intended (ballistic flight, a machine, a deliberate wag), add it to `exempt` and write the reason in the beat sheet. Treat each WARN as a question: "is this intentional?" For UI easing only, run `motion_check.py bezier "0.2,0,0,1"` or `motion_check.py spring --stiffness 170 --damping 26`.
+5. **Check, then watch.** Sample every animated channel once per frame and write the samples to JSON. `examples/tracks.example.json` is a file you can copy. `SKILL_DIR` below is the folder that holds this `SKILL.md`. Run:
+   `python3 "$SKILL_DIR/scripts/motion_check.py" tracks path/to/tracks.json`
+   Fix each FAIL. If the motion is intended (ballistic flight, a machine, a deliberate wag), add it to `exempt` and write the reason in the beat sheet. Treat each WARN as a question: "is this intentional?" For an easing curve or a spring, run `python3 "$SKILL_DIR/scripts/motion_check.py" bezier "0.2,0,0,1"` or `... spring --stiffness 170 --damping 26`. The checker's docstring lists every check, every optional field (`beats`, `exempt`, `wind_ups`, `contacts`) and its sampling limits.
    The checker is a diagnostic for the samples you give it. It does not judge appeal. Always watch the final motion at its real frame rate (a GIF, a video or a live preview). Use a 6-8 frame contact sheet to compare poses.
 
 ## Principles as operators (defaults at dial 1.0, 24 fps)

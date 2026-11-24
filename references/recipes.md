@@ -8,10 +8,12 @@ Use one spring per loose part. It gives lag, overshoot and decay from three numb
 
 ```js
 // state: { x, v } ; zeta = c / (2*sqrt(k*m))
-// zeta 0.3-0.6 = lively (each swing is 37-10% of the last), 0.7-0.9 = calm, 1.0 = no overshoot
+// zeta 0.3-0.6 = lively (each swing is 37-10% of the last), 0.7-0.9 = calm,
+// 1.0 = no overshoot when it starts at rest and the target holds still
 function springStep(s, target, k, c, dt, m = 1) {
   const wn = Math.sqrt(k / m);                       // natural frequency, rad/s
-  const n = Math.max(1, Math.ceil(dt * wn / 0.1));   // substeps keep semi-implicit Euler stable
+  // substeps keep semi-implicit Euler stable for stiff springs and for heavy damping
+  const n = Math.max(1, Math.ceil(dt * Math.max(wn / 0.1, (c / m) / 0.5)));
   const h = dt / n;
   for (let i = 0; i < n; i++) {
     const a = (k * (target - s.x) - c * s.v) / m;
@@ -30,8 +32,11 @@ The ratio between one swing and the next (on opposite sides) is `exp(-PI*zeta / 
 
 ```js
 // links[0] is the root. Its x is set from the body every frame. Each child springs toward
-// its parent's angle plus its rest offset. Angles in degrees.
-const links = [{ x: 0, v: 0 }, ...Array.from({ length: 4 }, (_, i) => ({ x: 0, v: 0, rest: i ? 6 : 35 }))];
+// its parent's angle plus its rest offset. Angles in degrees. Start every link at its rest
+// pose (cumulative offsets), or the tail swings on frame 0 for no reason.
+const rests = [35, 6, 6, 6];
+const links = [{ x: 0, v: 0 }];
+for (const r of rests) links.push({ x: links[links.length - 1].x + r, v: 0, rest: r });
 
 function updateChain(bodyAngle, bodyKick, dt) {
   links[0].x = bodyAngle;
@@ -52,8 +57,10 @@ const stretch = 1 + amount * clamp(speed / speedForMax, 0, 1);   // along the ve
 const sy = impact ? 1 - squashDepth : stretch;                     // squash on contact
 const sx = 1 / sy;                // 2D area kept
 // 3D: sx = sz = 1 / Math.sqrt(sy)
-// rotate the scale axis to the velocity direction, and keep the contact point on the ground:
-// pivot at the feet, or offset y by (1 - sy) * halfHeight
+// rotate the scale axis to the velocity direction, and keep the contact point on the ground.
+// Best: scale about a pivot node placed at the contact point. Without a pivot, recompute the
+// centre from the transformed shape: for an ellipse with radii rx, ry rotated by theta, the
+// centre sits hypot(rx*sin(theta), ry*cos(theta)) above its lowest point (y up).
 ```
 Squash for 2-4 frames on impact, then spring back to 1 (recipe 1, zeta ≈ 0.4). A rest pose is always 1.0.
 
@@ -94,12 +101,12 @@ angle = A * env * Math.sin(2 * Math.PI * freq * t + phase); // freq 3-5 Hz for a
 ## 8. Variation (appeal)
 
 - Twins: offset mirrored parts by 1-3 frames and scale one by 0.85-0.95.
-- Loops: add ±5-10% noise to amplitude and period per cycle. Do not sync parts on one master phase.
+- Loops: for an exported loop (GIF, Lottie, sprite sheet), match the first and last poses and velocities. For a live idle, vary amplitude and frequency by ±5-10% with slow noise and keep the phase continuous; never jump to new values at a cycle boundary. Give each part its own phase.
 - Pose asymmetry: tilt the head 5-15°, put weight on one leg, rotate the shoulders against the hips.
 
 ## Stack notes
 
-- **Three.js / Babylon / game engines:** run recipes 1-2 in the update loop with real `dt` and clamp `dt` to ≤ 1/30. Apply squash on a parent "squash" node whose pivot sits at the contact point, so the rig's bones are not scaled.
+- **Three.js / Babylon / game engines:** run recipes 1-2 in the update loop with the real `dt`; `springStep` substeps it. After a long pause (a background tab), cap `dt` at about 0.1 s on purpose so springs do not explode. Apply squash on a parent "squash" node whose pivot sits at the contact point, so the rig's bones are not scaled.
 - **GSAP:** use timelines with labels, one label per beat. Use `power2.out` for actions, `back.out(1.4)` (about 7% overshoot) for explainer or character overshoot, `back.out(1.0)` or less for product UI, and `elastic.out(1, 0.4)` only for a cartoon dial of 1.0 or more. Add overlap with position offsets (`"<0.04"`).
 - **Framer Motion / Motion:** `transition={{ type: "spring", stiffness, damping, mass }}`. Stagger children by 30-60 ms.
 - **CSS:** `cubic-bezier()` for single eases. Use `linear()` with sampled points for springs (generate the points from recipe 1). Use `@keyframes` with a squash keyframe for impacts.
