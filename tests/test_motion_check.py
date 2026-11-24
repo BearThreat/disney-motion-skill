@@ -125,7 +125,7 @@ class CriticCases(unittest.TestCase):
 
     def test_ballistic_x_fails_unless_exempt(self):
         n = 20
-        doc = {"context": "character", "tracks": {"x": [10.0 * i for i in range(n + 1)] + [200.0] * 4}}
+        doc = {"context": "character", "tracks": {"x": [0.0] * 3 + [10.0 * i for i in range(n + 1)] + [200.0] * 4}}
         self.assertIn(("ease", "FAIL"), checks(doc))
         doc["exempt"] = {"ease": ["x"]}
         self.assertNotIn("ease", self.kinds(doc))
@@ -279,6 +279,53 @@ class CriticRound2(unittest.TestCase):
         r = mc.spring_report(1, 1e9)
         self.assertGreater(r["settle_seconds_2pct"], 1e8)
         self.assertEqual(r["overshoot"], 0.0)
+
+
+class CriticRound3(unittest.TestCase):
+    def kinds(self, doc):
+        return {c for c, _ in checks(doc)}
+
+    def test_explicit_beat_pulse_overshoot(self):
+        sy = [1.0, 1.0, 1.08, 1.2, 1.12, 1.04, 1.04, 1.04]
+        doc = {"context": "ui", "tracks": {"s": sy}, "scale": ["s"], "beats": {"s": [[1, 5]]}}
+        self.assertIn(("overshoot", "FAIL"), checks(doc))
+
+    def test_back_to_back_needs_beats(self):
+        xs = [0, 0, 40, 90, 130, 100, 60, 20, 0, 0, 0]
+        doc = {"context": "ui", "tracks": {"x": xs}, "beats": {"x": [[1, 5], [5, 9]]}}
+        self.assertIn(("overshoot", "FAIL"), checks(doc))
+
+    def test_cropped_clip_is_not_judged(self):
+        doc = {"context": "ui", "ends_at_rest": False, "tracks": {"x": [0, 0, 30, 60, 87, 75, 65, 65]}}
+        self.assertNotIn("overshoot", self.kinds(doc))
+        doc = {"context": "object", "tracks": {"x": [10.0 * i for i in range(20)]}}
+        self.assertNotIn("ease", self.kinds(doc))
+
+    def test_leading_child_is_flagged(self):
+        w = [20 * math.sin(2 * math.pi * f / 16) for f in range(64)]
+        lead = w[2:] + [20 * math.sin(2 * math.pi * f / 16) for f in range(64, 66)]
+        found = [f for f in mc.check_tracks({"tracks": {"a": w, "b": lead}, "chains": [["a", "b"]]})
+                 if f["check"] == "overlap"]
+        self.assertTrue(found and "leads" in found[0]["msg"], found)
+
+    def test_exact_limits_pass(self):
+        self.assertNotIn("overshoot", self.kinds({"context": "ui", "tracks": {"x": [0, 0.5, 1.1, 1.0, 1.0, 1.0]}}))
+        sy = [1.0, 1.06, 1.0, 1.0]
+        self.assertNotIn("volume", self.kinds({"tracks": {"sx": [1.0] * 4, "sy": sy}, "volume": [["sx", "sy"]]}))
+
+    def test_huge_integer_is_bad_input(self):
+        script = os.path.join(ROOT, "scripts", "motion_check.py")
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "big.json")
+            with open(path, "w") as fh:
+                fh.write('{"tracks": {"x": [0, 1, ' + "9" * 401 + ']}}')
+            p = subprocess.run([sys.executable, script, "tracks", path], capture_output=True, text=True)
+            self.assertEqual(p.returncode, 2, p.stderr)
+
+    def test_recommended_ui_curve_label(self):
+        r = mc.bezier_report(0.2, 0, 0, 1)
+        self.assertIn("starts slow", r["shape"])
+        self.assertIn("ends slow", r["shape"])
 
 
 class ExampleFile(unittest.TestCase):

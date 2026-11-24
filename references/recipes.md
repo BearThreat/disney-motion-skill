@@ -1,6 +1,6 @@
 # Recipes
 
-Load this only when you write the animation code. Every recipe works in seconds (`dt`), so it works at any frame rate. The working version of all of them together is `examples/hop_demo.py` (`disney()`).
+Load this only when you write the animation code. The recipes use seconds, so they work at any frame rate. `examples/hop_demo.py` (`disney()`) shows recipes 1-5 and 7 working together in one hop (springs, a tail chain, squash, anticipation, an arc and a decaying shake); blinks and live idles are not in it.
 
 ## 1. Damped spring (follow-through, overlap, settle)
 
@@ -24,9 +24,9 @@ function springStep(s, target, k, c, dt, m = 1) {
 }
 ```
 
-How to pick k and c: choose the undamped natural frequency `f` (Hz) and ratio `zeta`. Then `k = (2*PI*f)^2 * m` and `c = 2*zeta*sqrt(k*m)`. The visible wobble is a little slower than `f`: `f * sqrt(1 - zeta^2)`. A tail or ear on a small creature: f ≈ 2-3 Hz, zeta ≈ 0.35. A heavy coat or belly: f ≈ 1-1.5 Hz, zeta ≈ 0.5. Check a pair with `motion_check.py spring --stiffness K --damping C`. It reports the overshoot and the 2% settle time.
+How to pick k and c: choose the undamped natural frequency `f` (Hz) and ratio `zeta`. Then `k = (2*PI*f)^2 * m` and `c = 2*zeta*sqrt(k*m)`. For `0 <= zeta < 1`, the visible wobble is a little slower than `f`: `f * sqrt(1 - zeta^2)`. At `zeta >= 1` the spring does not oscillate. A tail or ear on a small creature: f ≈ 2-3 Hz, zeta ≈ 0.35. A heavy coat or belly: f ≈ 1-1.5 Hz, zeta ≈ 0.5. Check a pair with `motion_check.py spring --stiffness K --damping C`. It reports the overshoot and the 2% settle time.
 
-The ratio between one swing and the next (on opposite sides) is `exp(-PI*zeta / sqrt(1 - zeta^2))`. The number of visible swings also depends on how hard the part is pushed and on the size at which a swing stops being visible.
+For `0 <= zeta < 1`, the ratio between one swing and the next (on opposite sides) is `exp(-PI*zeta / sqrt(1 - zeta^2))`. The number of visible swings also depends on how hard the part is pushed and on the size at which a swing stops being visible.
 
 ## 2. Chain overlap (tails, hair, antennae, ears, cloth strips)
 
@@ -79,7 +79,7 @@ For a jump, crouch (squash 0.7-0.85 and lower the body), lean back, and dip the 
 ## 5. Arcs
 
 - Rotate limbs and heads about their pivot. Do not lerp their positions.
-- For a jump, use a parabola: `y = h * 4 * t * (1 - t)`. Make horizontal speed constant in the air, and ease only the takeoff and landing.
+- For a jump, use a parabola over normalized flight time: `u = clamp((time - takeoffTime) / flightTime, 0, 1)`, `lift = 4 * height * u * (1 - u)`. Keep horizontal speed constant in the air. Build that speed during takeoff and use it up in a skid or a step after landing.
 - For a screen-space move from A to B, use a quadratic Bézier with the control point offset perpendicular to the path by 10-25% of its length.
 
 ## 6. Moving hold, breath, idle
@@ -101,7 +101,7 @@ angle = A * env * Math.sin(2 * Math.PI * freq * t + phase); // freq 3-5 Hz for a
 ## 8. Variation (appeal)
 
 - Twins: offset mirrored parts by 1-3 frames and scale one by 0.85-0.95.
-- Loops: for an exported loop (GIF, Lottie, sprite sheet), match the first and last poses and velocities. For a live idle, vary amplitude and frequency by ±5-10% with slow noise and keep the phase continuous; never jump to new values at a cycle boundary. Give each part its own phase.
+- Loops: for an exported loop (GIF, Lottie, sprite sheet), make pose and velocity continuous across the loop boundary and export samples over `[0, period)`, so the first pose is not repeated at the end. To vary cycles in an export, put several different cycles inside one longer seamless loop. For a live idle, vary amplitude and frequency by ±5-10% with slow noise and keep the phase continuous; never jump to new values at a cycle boundary. Give each part its own phase.
 - Pose asymmetry: tilt the head 5-15°, put weight on one leg, rotate the shoulders against the hips.
 
 ## Stack notes
@@ -112,4 +112,4 @@ angle = A * env * Math.sin(2 * Math.PI * freq * t + phase); // freq 3-5 Hz for a
 - **CSS:** `cubic-bezier()` for single eases. Use `linear()` with sampled points for springs (generate the points from recipe 1). Use `@keyframes` with a squash keyframe for impacts.
 - **Remotion:** use `spring({ frame, fps, config: { damping, stiffness, mass } })` and `interpolate()` per beat. Remotion always renders at its own fps, so author the beats in seconds.
 - **Lottie / After Effects:** add an overshoot keyframe and set ease influence to 60-85%. Most Lottie players do not run After Effects expressions, so bake expressions and rig chains to plain keyframes before export, then check the result in the target player.
-- **Python / Blender:** set the F-Curve interpolation to BEZIER with AUTO_CLAMPED handles for keys. Bake springs from recipe 1 on frame-change handlers.
+- **Python / Blender:** for keys, set each `fcurve.keyframe_points` entry to `interpolation = "BEZIER"` with both handle types `"AUTO_CLAMPED"`. Simulate springs from recipe 1 once, in frame order, and bake the results to keyframes. A frame-change handler that steps the spring gives different poses when you scrub.

@@ -28,11 +28,15 @@ Optional groups (each name must exist in tracks):
   wind_ups  [21]                                     frames where a held wind-up ends (a crouch that holds)
   beats     {"x": [[0, 12], [20, 30]]}               explicit moves: [start_frame, rest_frame]; the value
                                                      at rest_frame is the target. Overrides inference.
+                                                     Needed for back-to-back transitions with no hold
+                                                     between them (open then close), or the checker
+                                                     reads them as one wag and skips overshoot.
   ends_at_rest  true (default) when the clip's last frame is the final target; false if it ends mid-move
   exempt    {"ease": ["ball.x"], "jelly": ["*"]}     checks to skip per track, for intended motion
   y_down    true when y grows downward (screen space)
 
-Sampling limit: moves shorter than 3 samples or 0.1 s are not checked for ease. For very short UI
+Sampling limits: moves shorter than 3 samples or 0.1 s, and moves cut by the clip's first or last
+frame, are not checked for ease. For very short UI
 feedback (80-150 ms), check the easing curve itself with the bezier or spring mode.
 
 Checks, and where they run:
@@ -108,9 +112,12 @@ def check_ease(name, xs, fps):
     out = []
     min_steps = max(3, round(0.1 * fps))
     rng = track_range(xs)
+    last = len(xs) - 1
     for s, e, _ in segments(xs, still_eps(xs)):
         if e - s < min_steps or abs(xs[e] - xs[s]) < 0.1 * rng:
             continue  # too short or too small to read as a move
+        if s == 0 or e == last:
+            continue  # cut by the clip edge: its real start or stop is not in the samples
         speeds = [abs(x) for x in velocity(xs[s:e + 1])]
         peak = max(speeds)
         if speeds[0] < 0.85 * peak or speeds[-1] < 0.85 * peak:
@@ -143,7 +150,7 @@ def rests(xs, fps, ends_at_rest=True):
         j = i
         while j < n and still[j]:
             j += 1
-        if move_start is not None and (j - i >= hold_min or j == n):
+        if move_start is not None and (j - i >= hold_min or (j == n and ends_at_rest)):
             beats.append((move_start, i))  # the move ends at frame i, which starts the hold
             move_start = None
         i = j
@@ -178,11 +185,13 @@ def check_settle(name, xs, fps, context, dial, beats=None, ends_at_rest=True):
         if side != 0:
             peaks.append(cur)
         crossings = len(peaks) - 1 if peaks else 0
-        wag = abs(disp) < 0.25 * reach  # returns to where it started: a wag, shake or pulse
+        # an inferred move that returns to where it started is a wag, shake or pulse; declared beats
+        # with a real change of value are always checked
+        wag = abs(disp) <= 1e-9 * ref if beats is not None else abs(disp) < 0.25 * reach
         if not wag:
             sign = 1 if disp > 0 else -1
             over = max(0.0, max(sign * x for x in d)) / abs(disp)
-            if over > limit:
+            if over > limit + 1e-9:
                 out.append(finding("overshoot", FAIL,
                                    f"frames {a}-{b}: passes its rest value by {over:.0%} of the move (limit "
                                    f"{limit:.0%} for {context}, dial {dial}).", name))
@@ -257,7 +266,7 @@ def check_volume(group, tracks):
             active += 1
     label = "*".join(group)
     out = []
-    if worst > 0.06:
+    if worst > 0.06 + 1e-9:
         out.append(finding("volume", FAIL, f"volume off by {worst:.0%} at frame {frame}. Keep {label} near 1 "
                                            "(2D: sx = 1/sy, 3D: sx = sz = 1/sqrt(sy)).", label))
     if active / n > 0.6:
@@ -297,25 +306,43 @@ def best_lag(a, b, max_lag, sign=1):
     return best_lag_, best
 
 
+def signed_lag(a, b, max_lag):
+    """Lag of b behind a (negative = b leads), over both axis polarities. Ties go to the smallest |lag|."""
+    cands = []
+    for sg in (1, -1):
+        lag, r = best_lag(a, b, max_lag, sg)
+        cands.append((round(r, 6), -lag, lag))
+        lead, r2 = best_lag(b, a, max_lag, sg)
+        cands.append((round(r2, 6), -lead, -lead))
+    r, _, lag = max(cands)
+    return lag, r
+
+
 def check_chain(chain, tracks, fps):
-    max_lag = max(4, round(0.5 * fps))
+    max_lag = max(4, round(0.25 * fps))  # the follow-through window: up to about a quarter second
     min_lag = max(1, round(fps / 30))
-    welded, judged = [], 0
+    welded, leading, judged = [], [], 0
     for a, b in zip(chain, chain[1:]):
         if track_range(tracks[a]) <= 1e-9 or track_range(tracks[b]) <= 1e-9:
             continue  # a still link: nothing to judge
-        lag, r = max((best_lag(tracks[a], tracks[b], max_lag, sg) for sg in (1, -1)), key=lambda t: (round(t[1], 6), -t[0]))
+        lag, r = signed_lag(tracks[a], tracks[b], max_lag)
         if r < 0.5:
             continue  # the link does not follow its parent clearly enough to measure a lag
         judged += 1
-        if lag < min_lag:
+        if lag <= -min_lag:
+            leading.append(f"{b} leads {a} by {-lag}")
+        elif lag < min_lag:
             welded.append(f"{a}->{b}")
     label = " -> ".join(chain)
-    if not welded:
-        return []
-    level = FAIL if len(welded) == judged else WARN
-    return [finding("overlap", level, f"{', '.join(welded)} move on the same frame. Drag each child {min_lag}+ "
-                                      "frame(s) behind its parent (spring or phase offset).", label)]
+    out = []
+    if welded:
+        level = FAIL if len(welded) == judged else WARN
+        out.append(finding("overlap", level, f"{', '.join(welded)} move on the same frame. Drag each child "
+                                             f"{min_lag}+ frame(s) behind its parent (spring or phase offset).", label))
+    if leading:
+        out.append(finding("overlap", WARN, f"{', '.join(leading)} frame(s). A child should follow its parent, not "
+                                            "lead it (unless it is a deliberate successive-breaking joint).", label))
+    return out
 
 
 def _turn(a, b, c):
@@ -421,7 +448,11 @@ def validate(doc):
     for k, v in tracks.items():
         if not isinstance(v, list) or len(v) < 3:
             raise BadInput(f"track {k} needs a list of at least 3 numbers")
-        if not all(isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) for x in v):
+        try:
+            ok = all(isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(float(x)) for x in v)
+        except OverflowError:
+            ok = False
+        if not ok:
             raise BadInput(f"track {k} must hold only finite numbers")
         lengths.add(len(v))
     if len(lengths) != 1:
@@ -521,12 +552,16 @@ def bezier_report(x1, y1, x2, y2, samples=4000):
     xs, ys = [bez(t, x1, x2) for t in ts], [bez(t, y1, y2) for t in ts]
     speeds = [(ys[i + 1] - ys[i]) / max(xs[i + 1] - xs[i], 1e-9) for i in range(samples)]
     peak_x = xs[max(range(samples), key=lambda i: speeds[i])]
+    start_slope = y1 / x1 if x1 > 0 else (math.inf if y1 > 0 else -math.inf if y1 < 0 else 0.0)
+    end_slope = (1 - y2) / (1 - x2) if x2 < 1 else (math.inf if y2 < 1 else -math.inf if y2 > 1 else 0.0)
     if abs(x1 - y1) < 1e-9 and abs(x2 - y2) < 1e-9:
         shape = "linear"
     else:
-        shape = "ease-out (fast start)" if peak_x < 0.3 else "ease-in (slow start)" if peak_x > 0.7 else "ease-in-out"
+        where = "early" if peak_x < 0.3 else "late" if peak_x > 0.7 else "mid-way"
+        ends = [n for n, sl in (("starts slow", start_slope), ("ends slow", end_slope)) if abs(sl) < 0.5]
+        shape = f"peak speed {where}" + (f", {' and '.join(ends)}" if ends else "")
     return {"overshoot": max(0.0, max(ys) - 1.0), "anticipation": max(0.0, -min(ys)),
-            "peak_speed_at": peak_x, "shape": shape}
+            "peak_speed_at": peak_x, "start_slope": start_slope, "end_slope": end_slope, "shape": shape}
 
 
 def spring_report(k, c, m=1.0):
@@ -602,7 +637,7 @@ def main(argv=None):
         with open(a.file) as fh:
             doc = json.load(fh)
         results = check_tracks(doc)
-    except (OSError, ValueError) as exc:  # BadInput and json.JSONDecodeError are ValueErrors
+    except (OSError, ValueError, OverflowError) as exc:  # BadInput and JSONDecodeError are ValueErrors
         print(f"bad input: {exc}", file=sys.stderr)
         return 2
     fails = [r for r in results if r["level"] == FAIL]

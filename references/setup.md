@@ -28,7 +28,7 @@ python3 -m unittest discover -s tests
 
 ## Update and remove
 
-- Git clone: `git -C ~/.claude/skills/disney-motion pull` to update. Delete the folder to remove.
+- Git clone: run `git pull` in the folder you cloned (for example `git -C ~/.agents/skills/disney-motion pull`). Delete that folder to remove.
 - `skills` CLI: `npx skills update disney-motion` to update, `npx skills remove disney-motion` to remove.
 
 ## Troubleshooting

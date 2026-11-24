@@ -50,7 +50,7 @@ Agents usually apply the 12 principles as decoration. Everything wobbles, every 
 | Timing | Frames per beat set weight and mood | A light object settles in 4-8 frames, a heavy one in 12-24. Hold a pose 6-12 frames so it reads. |
 | Exaggeration | Push the key poses, not every frame | Push 20-50% past realistic at the keys, then return to normal. |
 | Solid drawing | Keep volume and weight. Avoid twins | Offset left and right limbs by 1-3 frames and vary their amplitude 10-20%. |
-| Appeal | Clarity, asymmetry, variation | No perfect loops. Vary each cycle by ±5-10%. Moving holds drift by 1-3%. |
+| Appeal | Clarity, asymmetry, variation | Live idles vary each cycle by ±5-10%; exported loops stay seamless. Moving holds drift by 1-3%. |
 
 Code recipes for these operators, per stack and for procedural rigs: `references/recipes.md`. Load it only when you write the code. UI-specific numbers (durations, springs, reduced motion): `references/ui.md`.
 

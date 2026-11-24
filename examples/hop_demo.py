@@ -195,7 +195,7 @@ def draw_creature(d, tr, f, ox, ground):
     # tail from the rear, screen y down so angles flip
     r = math.radians(-rot)
     bx = x - rw * 0.85 * math.cos(r)
-    by = cy - rw * 0.85 * math.sin(r) * -1
+    by = cy - rw * 0.85 * math.sin(r)
     px, py = bx, by
     for i in range(1, TAIL + 1):
         a = math.radians(180 - tr[f"tail{i}.rot"][f])

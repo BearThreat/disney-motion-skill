@@ -25,4 +25,4 @@ How each principle applies in UI:
 
 Accessibility: honour `prefers-reduced-motion: reduce`. Replace travel and scale with a 150 ms opacity fade, and remove overshoot, parallax and looping motion. WCAG 2.2 SC 2.2.2 (Pause, Stop, Hide): moving content that starts by itself, lasts more than 5 seconds and runs next to other content needs a way to pause, stop or hide it, unless the motion is essential. This applies to one-shot motion as well as loops.
 
-Check a curve: `python3 scripts/motion_check.py bezier "0.2,0,0,1"` (no overshoot) or `"0.34,1.56,0.64,1"` (about 10%). `motion_check.py tracks` with `"context": "ui"` fails overshoot above 10% and warns on more than 2 wobbles.
+Check a curve: `python3 scripts/motion_check.py bezier "0.2,0,0,1"` (no overshoot) or `"0.34,1.56,0.64,1"` (about 10%). `motion_check.py tracks` with `"context": "ui"` fails overshoot above 10% and warns on more than 2 wobbles. For transitions that run back to back with no hold (open, then close), declare each one in `beats`.
